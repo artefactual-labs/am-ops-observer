@@ -1,0 +1,69 @@
+version: 2
+project_name: am-ops-observer
+
+release:
+  github:
+    owner: artefactual
+    name: am-ops-observer
+
+builds:
+  - id: am-ops-observer
+    main: ./cmd/api
+    binary: am-ops-observer
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: git
+  abbrev: 8
+
+nfpms:
+  - id: default
+    package_name: am-ops-observer
+    formats: [deb, rpm]
+    vendor: Artefactual Systems Inc.
+    homepage: https://github.com/artefactual/am-ops-observer
+    maintainer: Artefactual Systems Inc. <info@artefactual.com>
+    description: Archivematica transfer troubleshooting and customer reporting service.
+    license: AGPL-3.0-only
+    bindir: /usr/local/bin
+    file_name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Arch }}'
+    contents:
+      - src: systemd/am-ops-observer.service
+        dst: /etc/systemd/system/am-ops-observer.service
+        type: config
+      - src: packaging/default/am-ops-observer
+        dst: /etc/default/am-ops-observer
+        type: config
+      - src: packaging/default/am-ops-observer-config.env
+        dst: /etc/am-ops-observer/config.env
+        type: config
+      - src: packaging/default/am-ops-observer-secrets.env
+        dst: /etc/am-ops-observer/secrets.env
+        type: config
+    scripts:
+      postinstall: packaging/nfpm/postinstall.sh
+      preremove: packaging/nfpm/preremove.sh
+      postremove: packaging/nfpm/postremove.sh

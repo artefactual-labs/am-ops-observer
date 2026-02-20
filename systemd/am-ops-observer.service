@@ -1,0 +1,29 @@
+[Unit]
+Description=AM Ops Observer Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=-/etc/default/am-ops-observer
+LoadCredential=app-secrets:/etc/am-ops-observer/secrets.env
+Environment=APP_SECRETS_FILE=%d/app-secrets
+ExecStart=/usr/local/bin/am-ops-observer
+User=am-report
+Group=am-report
+Restart=on-failure
+RestartSec=2
+Environment=GOTRACEBACK=crash
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelLogs=yes
+ProtectKernelTunables=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+[Install]
+WantedBy=multi-user.target
