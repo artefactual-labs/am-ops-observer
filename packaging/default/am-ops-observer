@@ -1,0 +1,27 @@
+# /etc/default/am-ops-observer
+#
+# Minimal bootstrap file for systemd service startup.
+# Keep this file small and non-secret.
+#
+# It points the app to:
+# 1) main non-secret config file
+# 2) systemd credential name used for secrets
+#
+# Detailed options live in:
+#   /etc/am-ops-observer/config.env
+# Secrets live in:
+#   /etc/am-ops-observer/secrets.env
+# and are mounted by systemd LoadCredential.
+
+# Main non-secret env file path.
+APP_CONFIG_FILE="/etc/am-ops-observer/config.env"
+
+# Credential name as referenced in systemd unit:
+#   LoadCredential=<name>:/etc/am-ops-observer/secrets.env
+# Keep default unless you also change the systemd unit.
+APP_SECRETS_CREDENTIAL_NAME="app-secrets"
+
+# Optional explicit secrets file override.
+# Usually not needed when running under systemd because APP_SECRETS_FILE
+# is set automatically to %d/<credential-name>.
+# APP_SECRETS_FILE="/etc/am-ops-observer/secrets.env"

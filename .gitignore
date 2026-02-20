@@ -5,8 +5,8 @@
 *.dll
 *.so
 *.dylib
-am-realtime-report-ui
-am-ops-observer
+/am-realtime-report-ui
+/am-ops-observer
 
 # Go build/test
 *.test
