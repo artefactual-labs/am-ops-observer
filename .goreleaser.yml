@@ -3,7 +3,7 @@ project_name: am-ops-observer
 
 release:
   github:
-    owner: artefactual
+    owner: artefactual-labs
     name: am-ops-observer
 
 builds:
@@ -44,7 +44,7 @@ nfpms:
     package_name: am-ops-observer
     formats: [deb, rpm]
     vendor: Artefactual Systems Inc.
-    homepage: https://github.com/artefactual/am-ops-observer
+    homepage: https://github.com/artefactual-labs/am-ops-observer
     maintainer: Artefactual Systems Inc. <info@artefactual.com>
     description: Archivematica transfer troubleshooting and customer reporting service.
     license: AGPL-3.0-only
