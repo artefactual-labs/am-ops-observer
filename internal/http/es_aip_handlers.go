@@ -19,9 +19,15 @@ func aipListHandler(defaultLimit int, index string, esClient *esstore.Client) ne
 
 		limit := parseLimit(r, defaultLimit)
 		cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
+		dateFrom, dateTo, err := parseOptionalDateRange(r.URL.Query().Get("date_from"), r.URL.Query().Get("date_to"))
+		if err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
 
 		start := time.Now()
-		res, err := esClient.ListAIPs(r.Context(), index, limit, cursor)
+		res, err := esClient.ListAIPs(r.Context(), index, limit, cursor, query, dateFrom, dateTo)
 		recordExternalProbe("elasticsearch", "ListAIPs", time.Since(start).Seconds(), err)
 		if err != nil {
 			writeJSON(w, nethttp.StatusBadGateway, map[string]any{
@@ -32,12 +38,22 @@ func aipListHandler(defaultLimit int, index string, esClient *esstore.Client) ne
 		}
 
 		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"meta": map[string]any{
-				"index":       index,
-				"limit":       limit,
-				"count":       len(res.Items),
-				"next_cursor": res.NextCursor,
-			},
+			"meta": func() map[string]any {
+				meta := map[string]any{
+					"index":       index,
+					"limit":       limit,
+					"count":       len(res.Items),
+					"next_cursor": res.NextCursor,
+					"query":       query,
+				}
+				if dateFrom != nil {
+					meta["date_from"] = dateFrom.Format(time.RFC3339)
+				}
+				if dateTo != nil {
+					meta["date_to"] = dateTo.Format(time.RFC3339)
+				}
+				return meta
+			}(),
 			"data": res.Items,
 		})
 	}

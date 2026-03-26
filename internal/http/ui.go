@@ -549,6 +549,13 @@ const dashboardHTML = `<!doctype html>
               <article class="panel">
                 <div class="panel-heading"><h3>Completed Transfers (click row for details)</h3></div>
                 <div class="panel-body">
+                  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:8px">
+                    <label>From<br><input id="completed-date-from" type="date" /></label>
+                    <label>To<br><input id="completed-date-to" type="date" /></label>
+                    <label>Transfer / Ingest<br><input id="completed-search" type="text" placeholder="name or UUID" style="min-width:220px" /></label>
+                    <button class="tab-btn" id="completed-apply" type="button">Apply</button>
+                    <button class="tab-btn" id="completed-reset" type="button">Reset</button>
+                  </div>
                   <table>
                     <thead><tr><th>Transfer</th><th>Status</th><th>Completed</th><th>Duration</th><th>Files</th></tr></thead>
                     <tbody id="completed-body"><tr><td colspan="5">Loading...</td></tr></tbody>
@@ -619,6 +626,13 @@ const dashboardHTML = `<!doctype html>
                     </label>
                   </div>
                   <div class="panel-body">
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:8px">
+                      <label>From<br><input id="failed-date-from" type="date" /></label>
+                      <label>To<br><input id="failed-date-to" type="date" /></label>
+                      <label>Transfer / Ingest<br><input id="failed-search" type="text" placeholder="name or UUID" style="min-width:220px" /></label>
+                      <button class="tab-btn" id="failed-apply" type="button">Apply</button>
+                      <button class="tab-btn" id="failed-reset" type="button">Reset</button>
+                    </div>
                     <table class="service-table">
                       <thead><tr><th>Transfer</th><th>Status</th><th>Microservice</th><th>Failed At</th><th>Duration</th><th>Files</th><th>Failed Jobs</th><th>Raw</th></tr></thead>
                       <tbody id="failed-body"><tr><td colspan="8">Loading...</td></tr></tbody>
@@ -721,6 +735,13 @@ const dashboardHTML = `<!doctype html>
                 <article class="panel">
                   <div class="panel-heading"><h3>AIP List</h3></div>
                   <div class="panel-body">
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:8px">
+                      <label>Indexed From<br><input id="aip-date-from" type="date" /></label>
+                      <label>Indexed To<br><input id="aip-date-to" type="date" /></label>
+                      <label>AIP / SIP Name<br><input id="aip-search" type="text" placeholder="UUID or ingest name" style="min-width:220px" /></label>
+                      <button class="tab-btn" id="aip-apply" type="button">Apply</button>
+                      <button class="tab-btn" id="aip-reset" type="button">Reset</button>
+                    </div>
                     <table class="service-table">
                       <thead><tr><th>AIP UUID</th><th>SIP Name</th></tr></thead>
                       <tbody id="aip-list-body"><tr><td colspan="2">Loading...</td></tr></tbody>
@@ -837,8 +858,8 @@ const dashboardHTML = `<!doctype html>
                 <div class="panel-heading"><h3>Report Builder</h3></div>
                 <div class="panel-body">
                   <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:end">
-                    <label>Date From<br><input id="report-date-from" type="date" /></label>
-                    <label>Date To<br><input id="report-date-to" type="date" /></label>
+                    <label>Window Start (UTC)<br><input id="report-date-from" type="datetime-local" /></label>
+                    <label>Window End (UTC)<br><input id="report-date-to" type="datetime-local" /></label>
                     <label>Status<br>
                       <select id="report-status">
                         <option value="all">all</option>
@@ -1011,6 +1032,9 @@ const dashboardHTML = `<!doctype html>
     let aipCursor = '';
     let aipCurrentStats = null;
     let failureWindow = '24';
+    let completedFilters = { dateFrom: '', dateTo: '', query: '' };
+    let failedFilters = { dateFrom: '', dateTo: '', query: '' };
+    let aipFilters = { dateFrom: '', dateTo: '', query: '' };
     let reportColumns = [];
     let reportSelectedColumns = [];
     let reportRows = [];
@@ -1042,6 +1066,45 @@ const dashboardHTML = `<!doctype html>
       case '8760': return '1y';
       default: return 'all';
       }
+    }
+
+    function buildURL(base, params) {
+      const out = new URLSearchParams();
+      Object.keys(params || {}).forEach((key) => {
+        const value = params[key];
+        if (value == null || value === '') return;
+        out.set(key, String(value));
+      });
+      const qs = out.toString();
+      return qs ? (base + '?' + qs) : base;
+    }
+
+    function readFilters(prefix) {
+      return {
+        dateFrom: q('#' + prefix + '-date-from')?.value || '',
+        dateTo: q('#' + prefix + '-date-to')?.value || '',
+        query: (q('#' + prefix + '-search')?.value || '').trim(),
+      };
+    }
+
+    function writeFilters(prefix, filters) {
+      if (q('#' + prefix + '-date-from')) q('#' + prefix + '-date-from').value = filters.dateFrom || '';
+      if (q('#' + prefix + '-date-to')) q('#' + prefix + '-date-to').value = filters.dateTo || '';
+      if (q('#' + prefix + '-search')) q('#' + prefix + '-search').value = filters.query || '';
+    }
+
+    function formatDateInput(date) {
+      const pad = (n) => String(n).padStart(2, '0');
+      return date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate());
+    }
+
+    function formatDateTimeLocal(date) {
+      const pad = (n) => String(n).padStart(2, '0');
+      return date.getUTCFullYear() + '-' +
+        pad(date.getUTCMonth() + 1) + '-' +
+        pad(date.getUTCDate()) + 'T' +
+        pad(date.getUTCHours()) + ':' +
+        pad(date.getUTCMinutes());
     }
 
     function selectedReportColumns() {
@@ -1169,7 +1232,7 @@ const dashboardHTML = `<!doctype html>
         reportRows = payload?.data || [];
         const activeColumns = payload?.meta?.columns || columns;
         renderReportResults(activeColumns, reportRows);
-        text('report-summary', 'Rows: ' + (payload?.meta?.count || 0) + ' / Total: ' + (payload?.meta?.total || 0) + ' | Range: ' + (payload?.meta?.date_from || '-') + ' -> ' + (payload?.meta?.date_to || '-'));
+        text('report-summary', 'Rows: ' + (payload?.meta?.count || 0) + ' / Total: ' + (payload?.meta?.total || 0) + ' | Window: ' + (payload?.meta?.date_from || '-') + ' -> ' + (payload?.meta?.date_to || '-'));
         q('#report-debug-json').textContent = JSON.stringify({
           meta: payload?.meta || {},
           preview: reportRows.slice(0, 5),
@@ -1533,10 +1596,13 @@ const dashboardHTML = `<!doctype html>
           aipCursor = '';
           body.innerHTML = '';
         }
-        let url = '/api/v1/aips?limit=60';
-        if (aipCursor) {
-          url += '&cursor=' + encodeURIComponent(aipCursor);
-        }
+        const url = buildURL('/api/v1/aips', {
+          limit: 60,
+          cursor: aipCursor,
+          date_from: aipFilters.dateFrom,
+          date_to: aipFilters.dateTo,
+          q: aipFilters.query,
+        });
         const res = await getJSON(url);
         const items = res?.data || [];
         aipCursor = res?.meta?.next_cursor || '';
@@ -1765,8 +1831,15 @@ const dashboardHTML = `<!doctype html>
 	      try {
 	        text('failed-recent-title', 'Recent Failed Transfers (' + failureWindowLabel() + ')');
 	        text('failed-signatures-title', 'Global Failure Signatures (' + failureWindowLabel() + ', all failed transfers)');
+	        const failedURL = buildURL('/api/v1/transfers/failed', {
+	          hours: failureWindow,
+	          limit: 30,
+	          date_from: failedFilters.dateFrom,
+	          date_to: failedFilters.dateTo,
+	          q: failedFilters.query,
+	        });
 	        const [failed, signatures] = await Promise.all([
-	          getJSON('/api/v1/transfers/failed?hours=' + encodeURIComponent(failureWindow) + '&limit=30'),
+	          getJSON(failedURL),
 	          getJSON('/api/v1/troubleshooting/failure-signatures?hours=' + encodeURIComponent(failureWindow) + '&limit=30')
 	        ]);
 
@@ -1990,6 +2063,12 @@ const dashboardHTML = `<!doctype html>
 
     async function load() {
       try {
+        const completedURL = buildURL('/api/v1/transfers/completed', {
+          limit: 20,
+          date_from: completedFilters.dateFrom,
+          date_to: completedFilters.dateTo,
+          q: completedFilters.query,
+        });
         const [running, runningSIPs, stalled, failureCounts, hotspotsTransfer, hotspotsSIP, durations, promLive, promChart, completed] = await Promise.all([
           getJSON('/api/v1/transfers/running?limit=12'),
           getJSON('/api/v1/sips/running?limit=12'),
@@ -2000,7 +2079,7 @@ const dashboardHTML = `<!doctype html>
           getJSON('/api/v1/charts/transfer-durations?customer_id=all&month=' + new Date().toISOString().slice(0, 7)),
           getJSON('/api/v1/metrics/prometheus/live?match=mcp'),
           getJSON('/api/v1/charts/prometheus?target=' + encodeURIComponent('http://127.0.0.1:62992/metrics') + '&metric=mcpclient_job_total&minutes=120'),
-          getJSON('/api/v1/transfers/completed?limit=20')
+          getJSON(completedURL)
         ]);
 
         const runningTransfers = Number(running.meta?.count ?? 0);
@@ -2129,18 +2208,48 @@ const dashboardHTML = `<!doctype html>
     const reportTo = q('#report-date-to');
     if (reportFrom && reportTo) {
       const now = new Date();
-      const toISO = now.toISOString().slice(0, 10);
+      const toISO = formatDateTimeLocal(now);
       const fromDate = new Date(now.getTime() - (1000 * 60 * 60 * 24 * 30));
-      const fromISO = fromDate.toISOString().slice(0, 10);
+      const fromISO = formatDateTimeLocal(fromDate);
       reportFrom.value = fromISO;
       reportTo.value = toISO;
     }
+    writeFilters('completed', completedFilters);
+    writeFilters('failed', failedFilters);
+    writeFilters('aip', aipFilters);
     q('#report-run').addEventListener('click', () => runReportQuery());
     q('#report-export-csv').addEventListener('click', () => exportReportCSV());
     q('#report-save-template').addEventListener('click', () => saveReportTemplate());
     q('#report-load-template').addEventListener('click', () => loadSelectedTemplate());
     q('#report-delete-template').addEventListener('click', () => deleteSelectedTemplate());
     q('#aip-load-more').addEventListener('click', () => loadAIPList(false));
+    q('#completed-apply').addEventListener('click', () => {
+      completedFilters = readFilters('completed');
+      load();
+    });
+    q('#completed-reset').addEventListener('click', () => {
+      completedFilters = { dateFrom: '', dateTo: '', query: '' };
+      writeFilters('completed', completedFilters);
+      load();
+    });
+    q('#failed-apply').addEventListener('click', () => {
+      failedFilters = readFilters('failed');
+      loadFailedTab();
+    });
+    q('#failed-reset').addEventListener('click', () => {
+      failedFilters = { dateFrom: '', dateTo: '', query: '' };
+      writeFilters('failed', failedFilters);
+      loadFailedTab();
+    });
+    q('#aip-apply').addEventListener('click', () => {
+      aipFilters = readFilters('aip');
+      loadAIPList(true);
+    });
+    q('#aip-reset').addEventListener('click', () => {
+      aipFilters = { dateFrom: '', dateTo: '', query: '' };
+      writeFilters('aip', aipFilters);
+      loadAIPList(true);
+    });
 	    q('#failed-body').addEventListener('click', (ev) => {
 	      const target = ev.target;
 	      if (!(target instanceof Element)) return;

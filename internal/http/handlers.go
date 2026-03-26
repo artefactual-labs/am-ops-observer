@@ -120,9 +120,16 @@ func completedTransfersHandler(defaultLimit int, store *mysqlstore.Store) nethtt
 
 		limit := parseLimit(r, defaultLimit)
 		offset := parseOffset(r)
+		dateFrom, dateTo, err := parseOptionalDateRange(r.URL.Query().Get("date_from"), r.URL.Query().Get("date_to"))
+		if err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
 
 		var month *time.Time
-		if monthStr := strings.TrimSpace(r.URL.Query().Get("month")); monthStr != "" {
+		if monthStr := strings.TrimSpace(r.URL.Query().Get("month")); monthStr != "" && dateFrom == nil && dateTo == nil {
 			parsed, err := time.Parse("2006-01", monthStr)
 			if err != nil {
 				writeJSON(w, nethttp.StatusBadRequest, map[string]any{
@@ -134,7 +141,7 @@ func completedTransfersHandler(defaultLimit int, store *mysqlstore.Store) nethtt
 		}
 
 		start := time.Now()
-		items, err := store.ListCompletedTransfers(r.Context(), limit, offset, month)
+		items, err := store.ListCompletedTransfers(r.Context(), limit, offset, month, dateFrom, dateTo, r.URL.Query().Get("q"))
 		recordDBQuery("mcp", "ListCompletedTransfers", time.Since(start).Seconds(), err)
 		if err != nil {
 			status := nethttp.StatusInternalServerError
@@ -152,6 +159,15 @@ func completedTransfersHandler(defaultLimit int, store *mysqlstore.Store) nethtt
 		}
 		if month != nil {
 			meta["month"] = month.Format("2006-01")
+		}
+		if dateFrom != nil {
+			meta["date_from"] = dateFrom.Format(time.RFC3339)
+		}
+		if dateTo != nil {
+			meta["date_to"] = dateTo.Format(time.RFC3339)
+		}
+		if query := strings.TrimSpace(r.URL.Query().Get("q")); query != "" {
+			meta["query"] = query
 		}
 
 		writeJSON(w, nethttp.StatusOK, map[string]any{
@@ -466,8 +482,8 @@ func reportRoutesRouter(defaultLimit int, store *mysqlstore.Store) nethttp.Handl
 			}
 			writeJSON(w, nethttp.StatusOK, map[string]any{
 				"meta": map[string]any{
-					"date_from": dateFrom.Format("2006-01-02"),
-					"date_to":   dateTo.Add(-24 * time.Hour).Format("2006-01-02"),
+					"date_from": dateFrom.Format(time.RFC3339),
+					"date_to":   dateTo.Format(time.RFC3339),
 					"status":    strings.TrimSpace(req.Status),
 					"customer":  strings.TrimSpace(req.CustomerID),
 					"limit":     limit,
@@ -677,28 +693,90 @@ func parseReportDateRange(fromRaw, toRaw string) (time.Time, time.Time, error) {
 	to := now
 
 	if strings.TrimSpace(fromRaw) != "" {
-		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(fromRaw))
+		parsed, _, err := parseFlexibleTime(strings.TrimSpace(fromRaw))
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("invalid date_from, expected YYYY-MM-DD")
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid date_from, expected YYYY-MM-DD or YYYY-MM-DDTHH:MM")
 		}
 		from = parsed.UTC()
 	}
 	if strings.TrimSpace(toRaw) != "" {
-		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(toRaw))
+		parsed, dateOnly, err := parseFlexibleTime(strings.TrimSpace(toRaw))
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("invalid date_to, expected YYYY-MM-DD")
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid date_to, expected YYYY-MM-DD or YYYY-MM-DDTHH:MM")
 		}
 		to = parsed.UTC()
+		if dateOnly {
+			to = to.Add(24 * time.Hour)
+		}
 	}
 
 	if to.Before(from) {
 		return time.Time{}, time.Time{}, fmt.Errorf("date_to must be the same or after date_from")
 	}
 
-	// Inclusive date range on API input, converted to [from, to+1d) for SQL.
-	return time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC),
-		time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC).Add(24 * time.Hour),
-		nil
+	return from.UTC(), to.UTC(), nil
+}
+
+func parseOptionalDateRange(fromRaw, toRaw string) (*time.Time, *time.Time, error) {
+	var from *time.Time
+	var to *time.Time
+
+	if strings.TrimSpace(fromRaw) != "" {
+		parsed, _, err := parseFlexibleTime(strings.TrimSpace(fromRaw))
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid date_from, expected YYYY-MM-DD or YYYY-MM-DDTHH:MM")
+		}
+		v := parsed.UTC()
+		from = &v
+	}
+
+	if strings.TrimSpace(toRaw) != "" {
+		parsed, dateOnly, err := parseFlexibleTime(strings.TrimSpace(toRaw))
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid date_to, expected YYYY-MM-DD or YYYY-MM-DDTHH:MM")
+		}
+		v := parsed.UTC()
+		if dateOnly {
+			v = v.Add(24 * time.Hour)
+		}
+		to = &v
+	}
+
+	if from != nil && to != nil && to.Before(*from) {
+		return nil, nil, fmt.Errorf("date_to must be the same or after date_from")
+	}
+
+	return from, to, nil
+}
+
+func parseFlexibleTime(raw string) (time.Time, bool, error) {
+	raw = strings.TrimSpace(raw)
+	formats := []struct {
+		layout   string
+		dateOnly bool
+	}{
+		{layout: time.RFC3339, dateOnly: false},
+		{layout: "2006-01-02T15:04:05", dateOnly: false},
+		{layout: "2006-01-02T15:04", dateOnly: false},
+		{layout: "2006-01-02", dateOnly: true},
+	}
+
+	for _, format := range formats {
+		var (
+			t   time.Time
+			err error
+		)
+		if strings.Contains(format.layout, "Z07:00") {
+			t, err = time.Parse(format.layout, raw)
+		} else {
+			t, err = time.ParseInLocation(format.layout, raw, time.UTC)
+		}
+		if err == nil {
+			return t, format.dateOnly, nil
+		}
+	}
+
+	return time.Time{}, false, fmt.Errorf("invalid time value")
 }
 
 func parseLimit(r *nethttp.Request, defaultLimit int) int {

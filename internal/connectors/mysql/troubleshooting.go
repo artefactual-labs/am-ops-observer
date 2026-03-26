@@ -441,11 +441,26 @@ LEFT JOIN Tasks tsk
 }
 
 // ListFailedTransfers returns failed transfers with latest failure context.
-func (s *Store) ListFailedTransfers(ctx context.Context, since time.Time, limit, offset int) ([]FailedTransfer, error) {
+func (s *Store) ListFailedTransfers(ctx context.Context, since time.Time, until *time.Time, limit, offset int, query string) ([]FailedTransfer, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.queryTimeout)
 	defer cancel()
 
-	const q = `
+	whereClause := `
+	WHERE last_fail.transfer_uuid IS NOT NULL
+	  AND COALESCE(last_fail.fail_time, t.completed_at) >= ?
+`
+	args := []any{since}
+	if until != nil {
+		whereClause += "  AND COALESCE(last_fail.fail_time, t.completed_at) < ?\n"
+		args = append(args, *until)
+	}
+	if query = strings.TrimSpace(query); query != "" {
+		whereClause += "  AND (t.transferUUID LIKE ? OR t.currentLocation LIKE ?)\n"
+		like := "%" + query + "%"
+		args = append(args, like, like)
+	}
+
+	q := fmt.Sprintf(`
 SELECT
   t.transferUUID,
   t.currentLocation,
@@ -473,7 +488,7 @@ LEFT JOIN (
   FROM Transfers t2
   LEFT JOIN Jobs j
     ON j.SIPUUID = t2.transferUUID
-    AND j.unitType LIKE '%Transfer'
+    AND j.unitType LIKE '%%Transfer'
   LEFT JOIN Tasks tsk
     ON tsk.jobuuid = j.jobUUID
   GROUP BY t2.transferUUID
@@ -503,7 +518,7 @@ LEFT JOIN (
   FROM Jobs j
   LEFT JOIN Tasks tsk
     ON tsk.jobuuid = j.jobUUID
-  WHERE j.unitType LIKE '%Transfer'
+  WHERE j.unitType LIKE '%%Transfer'
   GROUP BY j.SIPUUID
 ) fj
   ON fj.transferUUID = t.transferUUID
@@ -536,20 +551,20 @@ LEFT JOIN (
 	    FROM Jobs j
 	    LEFT JOIN Tasks tsk
 	      ON tsk.jobuuid = j.jobUUID
-	    WHERE j.unitType LIKE '%Transfer'
+	    WHERE j.unitType LIKE '%%Transfer'
 	      AND COALESCE(tsk.exitCode, 0) <> 0
 	      AND j.currentStep = 4
 	  ) x
 	  WHERE x.rn = 1
 ) last_fail
   ON last_fail.transfer_uuid = t.transferUUID
-	WHERE last_fail.transfer_uuid IS NOT NULL
-	  AND COALESCE(last_fail.fail_time, t.completed_at) >= ?
+%s
 ORDER BY COALESCE(last_fail.fail_time, t.completed_at) DESC
 LIMIT ? OFFSET ?;
-`
+`, whereClause)
 
-	rows, err := s.db.QueryContext(ctx, q, since, limit, offset)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -558,31 +573,31 @@ LIMIT ? OFFSET ?;
 	items := make([]FailedTransfer, 0, limit)
 	for rows.Next() {
 		var (
-				item            FailedTransfer
-				currentLocation string
-				failedAt        sql.NullTime
-				startedAt       sql.NullTime
-				hasSIPOutput    sql.NullInt64
-			)
+			item            FailedTransfer
+			currentLocation string
+			failedAt        sql.NullTime
+			startedAt       sql.NullTime
+			hasSIPOutput    sql.NullInt64
+		)
 		if err := rows.Scan(
 			&item.TransferUUID,
 			&currentLocation,
 			&item.StatusCode,
 			&failedAt,
 			&startedAt,
-				&item.DurationSeconds,
-				&item.FilesTotal,
-				&item.FailedJobs,
-				&hasSIPOutput,
-				&item.MicroserviceGroup,
-				&item.ErrorText,
-			); err != nil {
+			&item.DurationSeconds,
+			&item.FilesTotal,
+			&item.FailedJobs,
+			&hasSIPOutput,
+			&item.MicroserviceGroup,
+			&item.ErrorText,
+		); err != nil {
 			return nil, err
 		}
-			item.Name = transferNameFromLocation(currentLocation, item.TransferUUID)
-			item.Recoverable = nullInt64Value(hasSIPOutput) > 0
-			item.Status = transferStatusNameWithEvidence(item.StatusCode, true, item.Recoverable)
-			item.FailedAt = nullTimePtr(failedAt)
+		item.Name = transferNameFromLocation(currentLocation, item.TransferUUID)
+		item.Recoverable = nullInt64Value(hasSIPOutput) > 0
+		item.Status = transferStatusNameWithEvidence(item.StatusCode, true, item.Recoverable)
+		item.FailedAt = nullTimePtr(failedAt)
 		item.StartedAt = nullTimePtr(startedAt)
 		item.ErrorText = compactError(item.ErrorText)
 		items = append(items, item)

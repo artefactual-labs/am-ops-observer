@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -40,18 +41,31 @@ type TransferSummary struct {
 	FailedJobs      int64      `json:"failed_jobs"`
 }
 
-// ListCompletedTransfers returns newest completed transfers, optionally filtered by month.
-func (s *Store) ListCompletedTransfers(ctx context.Context, limit, offset int, month *time.Time) ([]CompletedTransfer, error) {
+// ListCompletedTransfers returns newest completed transfers, optionally filtered by month/date range and search query.
+func (s *Store) ListCompletedTransfers(ctx context.Context, limit, offset int, month *time.Time, dateFrom, dateTo *time.Time, query string) ([]CompletedTransfer, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.queryTimeout)
 	defer cancel()
 
 	whereClause := "WHERE t.status IN (2, 3, 4) AND t.completed_at IS NOT NULL"
-	args := make([]any, 0, 4)
-	if month != nil {
+	args := make([]any, 0, 8)
+	if dateFrom != nil {
+		whereClause += " AND t.completed_at >= ?"
+		args = append(args, *dateFrom)
+	}
+	if dateTo != nil {
+		whereClause += " AND t.completed_at < ?"
+		args = append(args, *dateTo)
+	}
+	if month != nil && dateFrom == nil && dateTo == nil {
 		start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 		end := start.AddDate(0, 1, 0)
 		whereClause += " AND t.completed_at >= ? AND t.completed_at < ?"
 		args = append(args, start, end)
+	}
+	if query = strings.TrimSpace(query); query != "" {
+		whereClause += " AND (t.transferUUID LIKE ? OR t.currentLocation LIKE ?)"
+		like := "%" + query + "%"
+		args = append(args, like, like)
 	}
 
 	q := fmt.Sprintf(`
@@ -147,13 +161,13 @@ LIMIT ? OFFSET ?;
 	items := make([]CompletedTransfer, 0, limit)
 	for rows.Next() {
 		var (
-				item            CompletedTransfer
-				currentLocation string
-				startedAt       sql.NullTime
-				completedAt     sql.NullTime
-				failedMarkers   sql.NullInt64
-				hasSIPOutput    sql.NullInt64
-			)
+			item            CompletedTransfer
+			currentLocation string
+			startedAt       sql.NullTime
+			completedAt     sql.NullTime
+			failedMarkers   sql.NullInt64
+			hasSIPOutput    sql.NullInt64
+		)
 
 		if err := rows.Scan(
 			&item.TransferUUID,
@@ -163,21 +177,21 @@ LIMIT ? OFFSET ?;
 			&completedAt,
 			&item.DurationSeconds,
 			&item.FilesTotal,
-				&item.FilesOriginal,
-				&item.FilesNormalized,
-				&failedMarkers,
-				&hasSIPOutput,
-			); err != nil {
-				return nil, err
-			}
+			&item.FilesOriginal,
+			&item.FilesNormalized,
+			&failedMarkers,
+			&hasSIPOutput,
+		); err != nil {
+			return nil, err
+		}
 
-			item.Name = transferNameFromLocation(currentLocation, item.TransferUUID)
-			item.FailureEvidence = nullInt64Value(failedMarkers) > 0
-			item.Recoverable = item.FailureEvidence && nullInt64Value(hasSIPOutput) > 0
-			item.Status = transferStatusNameWithEvidence(item.StatusCode, item.FailureEvidence, item.Recoverable)
-			item.StartedAt = nullTimePtr(startedAt)
-			item.CompletedAt = nullTimePtr(completedAt)
-			items = append(items, item)
+		item.Name = transferNameFromLocation(currentLocation, item.TransferUUID)
+		item.FailureEvidence = nullInt64Value(failedMarkers) > 0
+		item.Recoverable = item.FailureEvidence && nullInt64Value(hasSIPOutput) > 0
+		item.Status = transferStatusNameWithEvidence(item.StatusCode, item.FailureEvidence, item.Recoverable)
+		item.StartedAt = nullTimePtr(startedAt)
+		item.CompletedAt = nullTimePtr(completedAt)
+		items = append(items, item)
 	}
 
 	if err := rows.Err(); err != nil {

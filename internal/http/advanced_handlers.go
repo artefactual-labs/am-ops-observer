@@ -64,19 +64,19 @@ func errorHotspotsHandler(defaultLimit int, store *mysqlstore.Store) nethttp.Han
 		unit := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("unit")))
 		if unit == "" {
 			unit = "transfer"
-			}
-			if unit != "transfer" && unit != "sip" && unit != "all" {
-				writeJSON(w, nethttp.StatusBadRequest, map[string]any{"error": "invalid unit, use transfer|sip|all"})
-				return
-			}
+		}
+		if unit != "transfer" && unit != "sip" && unit != "all" {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]any{"error": "invalid unit, use transfer|sip|all"})
+			return
+		}
 
-			start := time.Now()
-			items, err := store.ListErrorHotspots(r.Context(), since, limit, unit)
-			recordDBQuery("mcp", "ListErrorHotspots", time.Since(start).Seconds(), err)
-			if err != nil {
-				writeJSON(w, nethttp.StatusInternalServerError, map[string]any{"error": "failed to fetch error hotspots"})
-				return
-			}
+		start := time.Now()
+		items, err := store.ListErrorHotspots(r.Context(), since, limit, unit)
+		recordDBQuery("mcp", "ListErrorHotspots", time.Since(start).Seconds(), err)
+		if err != nil {
+			writeJSON(w, nethttp.StatusInternalServerError, map[string]any{"error": "failed to fetch error hotspots"})
+			return
+		}
 
 		writeJSON(w, nethttp.StatusOK, map[string]any{
 			"meta": map[string]any{"hours": hours, "limit": limit, "unit": unit, "count": len(items)},
@@ -133,17 +133,36 @@ func failedTransfersHandler(defaultLimit int, store *mysqlstore.Store) nethttp.H
 
 		limit := parseLimit(r, defaultLimit)
 		offset := parseOffset(r)
+		dateFrom, dateTo, err := parseOptionalDateRange(r.URL.Query().Get("date_from"), r.URL.Query().Get("date_to"))
+		if err != nil {
+			writeJSON(w, nethttp.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
 		since, hours := parseFailureWindow(r.URL.Query().Get("hours"), 24*30, 24*365*20)
+		if dateFrom != nil {
+			since = *dateFrom
+		}
 		start := time.Now()
-		items, err := store.ListFailedTransfers(r.Context(), since, limit, offset)
+		items, err := store.ListFailedTransfers(r.Context(), since, dateTo, limit, offset, r.URL.Query().Get("q"))
 		recordDBQuery("mcp", "ListFailedTransfers", time.Since(start).Seconds(), err)
 		if err != nil {
 			writeJSON(w, nethttp.StatusInternalServerError, map[string]any{"error": "failed to fetch failed transfers"})
 			return
 		}
 
+		meta := map[string]any{"hours": hours, "limit": limit, "offset": offset, "count": len(items)}
+		if dateFrom != nil {
+			meta["date_from"] = dateFrom.Format(time.RFC3339)
+		}
+		if dateTo != nil {
+			meta["date_to"] = dateTo.Format(time.RFC3339)
+		}
+		if query := strings.TrimSpace(r.URL.Query().Get("q")); query != "" {
+			meta["query"] = query
+		}
+
 		writeJSON(w, nethttp.StatusOK, map[string]any{
-			"meta": map[string]any{"hours": hours, "limit": limit, "offset": offset, "count": len(items)},
+			"meta": meta,
 			"data": items,
 		})
 	}

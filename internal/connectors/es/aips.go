@@ -102,7 +102,7 @@ type AIPStats struct {
 	RawExtensionCounts          map[string]int64        `json:"raw_extension_counts"`
 }
 
-func (c *Client) ListAIPs(ctx context.Context, index string, limit int, cursor string) (*AIPListResult, error) {
+func (c *Client) ListAIPs(ctx context.Context, index string, limit int, cursor, query string, dateFrom, dateTo *time.Time) (*AIPListResult, error) {
 	if !c.Enabled() {
 		return nil, nil
 	}
@@ -124,8 +124,40 @@ func (c *Client) ListAIPs(ctx context.Context, index string, limit int, cursor s
 	items := make([]AIPListItem, 0, limit)
 	seen := map[string]struct{}{}
 	var nextSort []any
+	query = strings.TrimSpace(query)
 
 	for page := 0; page < 10 && len(items) < limit; page++ {
+		boolQuery := map[string]any{}
+		filters := make([]any, 0, 1)
+		if dateFrom != nil || dateTo != nil {
+			rangeSpec := map[string]any{}
+			if dateFrom != nil {
+				rangeSpec["gte"] = dateFrom.UTC().Format(time.RFC3339)
+			}
+			if dateTo != nil {
+				rangeSpec["lt"] = dateTo.UTC().Format(time.RFC3339)
+			}
+			filters = append(filters, map[string]any{
+				"range": map[string]any{
+					"indexedAt": rangeSpec,
+				},
+			})
+		}
+		if len(filters) > 0 {
+			boolQuery["filter"] = filters
+		}
+		if query != "" {
+			boolQuery["must"] = []any{
+				map[string]any{
+					"simple_query_string": map[string]any{
+						"query":            query,
+						"fields":           []string{"AIPUUID^4", "AIPUUID.keyword^6", "sipName^3", "sipName.keyword^5"},
+						"default_operator": "and",
+					},
+				},
+			}
+		}
+
 		body := map[string]any{
 			"size":    limit * 3,
 			"_source": []string{"AIPUUID", "sipName"},
@@ -133,6 +165,9 @@ func (c *Client) ListAIPs(ctx context.Context, index string, limit int, cursor s
 				map[string]any{"AIPUUID": "asc"},
 				map[string]any{"FILEUUID": "asc"},
 			},
+		}
+		if len(boolQuery) > 0 {
+			body["query"] = map[string]any{"bool": boolQuery}
 		}
 		if len(searchAfter) > 0 {
 			body["search_after"] = searchAfter
